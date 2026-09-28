@@ -22,8 +22,9 @@ Recipe Lab（在 A6000 上实机工作）证明了唯一可行方式——**App 
 |---|---|
 | `XPanOverlay-1.2.apk` | 已签名的安装包（v1+v2 签名，dex 035，SurfaceView 预览版） |
 | `src/` | Java 源码（MainActivity / OverlayView） |
-| `build.sh` | 一键重建脚本 |
-| `debug.keystore` | 开发签名密钥（重打包用，密码 xpan1234） |
+| `build.sh` | 一键重建脚本（Git Bash / WSL / macOS / Linux） |
+| `build.ps1` | 一键重建脚本（Windows 原生 PowerShell，推荐） |
+| `debug.keystore` | 开发签名密钥（重打包用，密码 xpan1234；被 `.gitignore` 排除，脚本首次运行自动生成） |
 | `third_party/recipe-lab-sony-pmca/` | 参考项目源码（配置/预览/按键完整实现） |
 | `third_party/openmemories-framework/` | OpenMemories 框架源码（含索尼 scalar API stubs） |
 
@@ -72,9 +73,40 @@ pmca-console install XPanOverlay-1.2.apk
 
 ## 重建 APK
 
-需要 Android SDK platform-10 + build-tools 25.0.3 + JDK：
+需要 JDK 8+ 与 Android SDK（platform android-10 + build-tools 25.0.3）。两个脚本都会自动探测
+`JAVA_HOME` / `ANDROID_HOME`，探测不到时也可以自动下载。
+
+Windows（原生 PowerShell，不需要 Git Bash）：
+
+```powershell
+.\build.ps1                 # 输出 build\XPanOverlay-1.2.apk
+.\build.ps1 -Bootstrap      # 顺带下载 cmdline-tools + platform + build-tools
+.\build.ps1 -Clean
+```
+
+Git Bash / WSL / macOS / Linux：
 
 ```bash
-./build.sh
-# 输出 build/XPanOverlay-1.0.apk（复制为 XPanOverlay-1.2.apk 交付）
+./build.sh                  # 输出 build/XPanOverlay-1.2.apk
+./build.sh --bootstrap
+./build.sh --clean
 ```
+
+可用环境变量覆盖自动探测：`JAVA_HOME`、`ANDROID_HOME`（或 `ANDROID_SDK_ROOT`）、
+`BT_VERSION`（默认 25.0.3）、`PLATFORM`（默认 android-10）。
+
+输出文件名跟随 `AndroidManifest.xml` 里的 `android:versionName`。
+
+### 已在 Windows 上验证
+
+环境：Windows + Microsoft OpenJDK 17 + Android build-tools 25.0.3 + platform android-10。
+产出的 `classes.dex` 与本仓库 `XPanOverlay-1.2.apk` 内的 dex **逐字节一致**
+（md5 `deb6ba907b38daf84007209c2fcd9a2a`），即新脚本在字节码层面精确复现了原产物。
+
+脚本里为绕开老工具链在新环境下的坑做了三处适配：
+
+| 问题 | 处理 |
+|---|---|
+| Windows 版 javac 默认按 GBK 读源码，源码含 UTF-8 字符 | 强制 `-encoding UTF-8` |
+| `dx`（build-tools ≤ 30）读不了 Java 7 之后的字节码（v52 会报 unsupported class file version） | 用 `--release 7` 出 v51；若装了 build-tools 26+ 则改用 d8 + `--release 8` |
+| `apksigner` 25.x 访问 `java.io.Console` 与 `sun.security.*`，被 JDK 9+ 模块系统拦截 | 追加 `--add-opens` / `--add-exports` |
