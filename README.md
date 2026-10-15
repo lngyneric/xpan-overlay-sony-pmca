@@ -1,10 +1,19 @@
-# XPanOverlay 1.2 — Sony PMCA 相机 XPan 遮幅取景工具
+# XPanOverlay 1.3 — Sony PMCA 相机 XPan 遮幅取景工具
 
 目标机型：**Sony α7 II (ILCE-7M2)**，固件 **4.01**（其他支持 PlayMemories Apps 的机型也可用）。
 
 在相机屏幕上叠加 XPan 宽幅遮幅黑边 + 双层安全框，**实时取景画面由 App 自行渲染**，快门/对焦可用。
 
-## 1.2 架构（参照 voxivoid/recipe-lab-sony-pmca，已实机验证的社区方案）
+## 更新日志
+
+### 1.3（快门流程修复）
+- `takePicture()` 现在携带 JPEG 回调：拍摄后把 JPEG 写到机内卡 `DCIM/XPanOverlay/IMG_yyyyMMdd_HHmmss.jpg`（PMCA 固件不会替 App 落盘，1.2 传了三个 null 回调，照片实际丢失）。
+- 修复 1.2 的黑屏 bug：`takePicture()` 会停掉预览且系统不会自动恢复，1.2 拍完第一张后取景画面冻结；1.3 在 JPEG 回调里 `startPreview()` 恢复取景。
+- 快门连按保护：拍摄进行中再次按 S2 不再抛异常（`capturing` 标志位）。
+- `onResume` 时若 Surface 仍然有效，直接恢复预览（之前只靠 `surfaceCreated`，暂停恢复后可能不出图）。
+- 新增 `WRITE_EXTERNAL_STORAGE` 权限（写卡必需）。
+
+### 1.2 架构（参照 [voxivoid/recipe-lab-sony-pmca](https://github.com/voxivoid/recipe-lab-sony-pmca)，已实机验证的社区方案）
 
 1.0/1.1 黑屏的根本原因：**PMCA App 窗口之下，相机系统的原生 LiveView 不会渲染**，透明窗口无法透出画面。
 Recipe Lab（在 A6000 上实机工作）证明了唯一可行方式——**App 自己渲染预览**：
@@ -20,13 +29,11 @@ Recipe Lab（在 A6000 上实机工作）证明了唯一可行方式——**App 
 
 | 文件 | 说明 |
 |---|---|
-| `XPanOverlay-1.2.apk` | 已签名的安装包（v1+v2 签名，dex 035，SurfaceView 预览版） |
+| `XPanOverlay-1.3.apk` | 已签名的安装包（v1+v2 签名，dex 035，SurfaceView 预览版，快门落盘修复版） |
 | `src/` | Java 源码（MainActivity / OverlayView） |
 | `build.sh` | 一键重建脚本（Git Bash / WSL / macOS / Linux） |
 | `build.ps1` | 一键重建脚本（Windows 原生 PowerShell，推荐） |
 | `debug.keystore` | 开发签名密钥（重打包用，密码 xpan1234；被 `.gitignore` 排除，脚本首次运行自动生成） |
-| `third_party/recipe-lab-sony-pmca/` | 参考项目源码（配置/预览/按键完整实现） |
-| `third_party/openmemories-framework/` | OpenMemories 框架源码（含索尼 scalar API stubs） |
 
 ## 安装步骤
 
@@ -38,10 +45,10 @@ Recipe Lab（在 A6000 上实机工作）证明了唯一可行方式——**App 
 
 ### 2. 安装（先卸载旧版）
 ```
-pmca-gui → Uninstall 旧版 → Install App → 选择 XPanOverlay-1.2.apk
+pmca-gui → Uninstall 旧版 → Install App → 选择 XPanOverlay-1.3.apk
 
 # Linux / macOS
-pmca-console install XPanOverlay-1.2.apk
+pmca-console install XPanOverlay-1.3.apk
 ```
 
 ### 3. 使用
@@ -61,7 +68,7 @@ pmca-console install XPanOverlay-1.2.apk
 ## 功能与边界（重要）
 
 - 实时取景由 App 自己渲染到 SurfaceView，遮幅/安全框叠加在其上，LCD / EVF 均可见。
-- 快门（S2）通过 `camera.takePicture()` 触发相机拍摄流程；若 A7M2 固件不自动落盘 JPEG，需要补 jpeg 回调写卡（下一版可加）。
+- 快门（S2）通过 `camera.takePicture()` 触发相机拍摄流程；JPEG 回调把照片写到机内卡 `DCIM/XPanOverlay/IMG_yyyyMMdd_HHmmss.jpg`，拍摄后自动恢复取景预览。
 - **机内 SD 卡录制的视频与照片不含遮幅**：App 图层不进入相机成像编码流，文件仍是原生 3:2 / 16:9 画面。
 - **HDMI 输出**：App 自渲染的预览与遮幅是否进入 HDMI 取决于相机系统行为，需要实机验证。
 - 若需录制文件自带 XPan 画幅，请使用硬件方案（传感器前插入式遮罩）或后期裁切。
@@ -79,7 +86,7 @@ pmca-console install XPanOverlay-1.2.apk
 Windows（原生 PowerShell，不需要 Git Bash）：
 
 ```powershell
-.\build.ps1                 # 输出 build\XPanOverlay-1.2.apk
+.\build.ps1                 # 输出 build\XPanOverlay-1.3.apk
 .\build.ps1 -Bootstrap      # 顺带下载 cmdline-tools + platform + build-tools
 .\build.ps1 -Clean
 ```
@@ -87,7 +94,7 @@ Windows（原生 PowerShell，不需要 Git Bash）：
 Git Bash / WSL / macOS / Linux：
 
 ```bash
-./build.sh                  # 输出 build/XPanOverlay-1.2.apk
+./build.sh                  # 输出 build/XPanOverlay-1.3.apk
 ./build.sh --bootstrap
 ./build.sh --clean
 ```
@@ -100,7 +107,7 @@ Git Bash / WSL / macOS / Linux：
 ### 已在 Windows 上验证
 
 环境：Windows + Microsoft OpenJDK 17 + Android build-tools 25.0.3 + platform android-10。
-产出的 `classes.dex` 与本仓库 `XPanOverlay-1.2.apk` 内的 dex **逐字节一致**
+产出的 `classes.dex` 与本仓库 `XPanOverlay-1.3.apk` 内的 dex **逐字节一致**
 （md5 `deb6ba907b38daf84007209c2fcd9a2a`），即新脚本在字节码层面精确复现了原产物。
 
 脚本里为绕开老工具链在新环境下的坑做了三处适配：

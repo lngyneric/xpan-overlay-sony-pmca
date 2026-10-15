@@ -3,13 +3,19 @@ package com.example.xpanoverlay;
 import android.app.Activity;
 import android.hardware.Camera;
 import android.os.Bundle;
+import android.os.Environment;
 import android.view.KeyEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.lang.reflect.Method;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 /**
  * XPan crop-mask overlay for Sony PMCA (PlayMemories Camera Apps).
@@ -27,6 +33,12 @@ import java.lang.reflect.Method;
  *
  * The camera system's own LiveView does NOT render under a PMCA app window,
  * so a transparent window cannot help; the app must render the preview.
+ *
+ * v1.3 — shutter flow fixed: takePicture() now carries a JPEG callback that
+ * writes the capture to DCIM/XPanOverlay on the card and restarts the
+ * preview (the stock Camera API halts preview after a shot and never
+ * resumes it on its own). A capture-in-progress guard prevents re-entrant
+ * takePicture() calls from throwing.
  *
  * Keys are matched by Sony SCAN CODE (com.sony.scalar.sysutil.ScalarInput),
  * not by Android KeyEvent keycode:
@@ -50,6 +62,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private int modeIndex = 0;
     private boolean maskVisible = true;
     private boolean safeFrameVisible = true;
+    private boolean capturing = false; // takePicture in flight; blocks re-entrant S2
 
     private static final float[] MODES = {
             OverlayView.ASPECT_XPAN,
@@ -86,6 +99,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         openCamera();
         if (camera != null) {
             holder.addCallback(this);
+            // If the Surface survived the pause (no surfaceDestroyed), the
+            // callback above will NOT re-fire surfaceCreated, so kick the
+            // preview here when the surface is already valid.
+            startPreviewIfReady();
         }
     }
 
@@ -113,12 +130,60 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    /** JPEG callback: persist the shot to the card, then resume the preview.
+     *  takePicture() halts the preview and the PMCA firmware does not save
+     *  the JPEG by itself, so both steps are mandatory here. */
+    private final Camera.PictureCallback jpegCallback = new Camera.PictureCallback() {
+        @Override
+        public void onPictureTaken(byte[] data, Camera cam) {
+            try {
+                if (data != null && data.length > 0) {
+                    saveJpeg(data);
+                }
+            } catch (Throwable t) {
+                // saving must never kill the preview loop
+            } finally {
+                capturing = false;
+                try { cam.startPreview(); } catch (Throwable t) {}
+            }
+        }
+    };
+
+    /** Write the JPEG bytes to DCIM/XPanOverlay/IMG_yyyyMMdd_HHmmss.jpg. */
+    private void saveJpeg(byte[] data) throws Exception {
+        File dir = new File(Environment.getExternalStorageDirectory(), "DCIM/XPanOverlay");
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            return;
+        }
+        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        File out = new File(dir, "IMG_" + stamp + ".jpg");
+        for (int i = 2; out.exists() && i < 100; i++) {
+            out = new File(dir, "IMG_" + stamp + "_" + i + ".jpg");
+        }
+        FileOutputStream fos = new FileOutputStream(out);
+        try {
+            fos.write(data);
+            fos.flush();
+        } finally {
+            try { fos.close(); } catch (Throwable t) {}
+        }
+    }
+
     @Override
     public void surfaceCreated(SurfaceHolder h) {
+        startPreviewIfReady();
+    }
+
+    /** (re)attach the preview to the SurfaceView; safe to call repeatedly. */
+    private void startPreviewIfReady() {
         try {
-            camera.setPreviewDisplay(h);
-            camera.startPreview();
-        } catch (Throwable t) {}
+            if (camera != null && holder.getSurface() != null && holder.getSurface().isValid()) {
+                camera.setPreviewDisplay(holder);
+                camera.startPreview();
+            }
+        } catch (Throwable t) {
+            // preview start is best-effort; a later surface event will retry
+        }
     }
 
     @Override
@@ -158,7 +223,14 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                 try { if (camera != null) camera.autoFocus(null); } catch (Throwable t) {}
                 return true;
             case K_S2:
-                try { if (camera != null) camera.takePicture(null, null, null); } catch (Throwable t) {}
+                if (camera != null && !capturing) {
+                    capturing = true;
+                    try {
+                        camera.takePicture(null, null, jpegCallback);
+                    } catch (Throwable t) {
+                        capturing = false;
+                    }
+                }
                 return true;
             case K_MENU:
             case K_SK1:
